@@ -1,0 +1,275 @@
+// obj tracking
+import cv2
+import pyttsx3
+import threading
+import time
+
+# Define the paths to the pre-trained models
+cart_cascade_path = 'path_to_shopping_cart_cascade.xml'
+customer_cascade_path = 'path_to_customer_cascade.xml'
+
+# Load the cascade classifiers for shopping cart and customer detection
+cart_cascade = cv2.CascadeClassifier(cart_cascade_path)
+customer_cascade = cv2.CascadeClassifier(customer_cascade_path)
+
+# Initialize voice synthesis
+engine = pyttsx3.init()
+
+# Function to generate voice alert
+def generate_alert():
+    engine.say("Alert! Empty shopping cart detected without a customer nearby.")
+    engine.runAndWait()
+
+# Timer thread to check if a shopping cart is empty and generate alert
+class TimerThread(threading.Thread):
+    def _init_(self, cart_id):
+        threading.Thread._init_(self)
+        self.cart_id = cart_id
+        self.last_seen_time = time.time()
+
+    def run(self):
+        while True:
+            current_time = time.time()
+            if current_time - self.last_seen_time > 900:  # 900 seconds = 15 minutes
+                generate_alert()
+                break
+
+# Function to process frame and detect shopping carts and customers
+def process_frame(frame):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    # Detect shopping carts in the frame
+    carts = cart_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+
+    for (x, y, w, h) in carts:
+        cart_roi = gray[y:y + h, x:x + w]
+
+        # Detect customers near the shopping cart
+        customers = customer_cascade.detectMultiScale(cart_roi, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+
+        if len(customers) == 0:
+            cart_id = f"{x}-{y}"  # Generate a unique ID for the cart based on its coordinates
+
+            # Start the timer thread for this cart
+            timer_thread = TimerThread(cart_id)
+            timer_thread.start()
+        else:
+            # Update the last seen time for the cart
+            cart_id = f"{x}-{y}"
+            timer_thread = next((t for t in threading.enumerate() if isinstance(t, TimerThread) and t.cart_id == cart_id), None)
+            if timer_thread:
+                timer_thread.last_seen_time = time.time()
+
+        # Draw rectangle around the cart
+        cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+
+    return frame
+
+# Open the video capture
+video_capture = cv2.VideoCapture(0)
+
+while True:
+    # Read the current frame from the video capture
+    ret, frame = video_capture.read()
+
+    # Process the frame
+    processed_frame = process_frame(frame)
+
+    # Display the processed frame
+    cv2.imshow('Shopping Cart Tracker', processed_frame)
+
+    # Check for 'q' key press to exit
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+# Release the video capture and close all windows
+video_capture.release()
+cv2.destroyAllWindows()
+
+
+
+// data augmentation
+import os
+from imgaug import augmenters as iaa
+from PIL import Image
+
+# Set paths
+dataset_dir = 'path/to/dataset'
+output_dir = 'path/to/output'
+
+# Create output directory
+os.makedirs(output_dir, exist_ok=True)
+
+# Augmentation parameters
+seq = iaa.Sequential([
+    iaa.Fliplr(0.5),  # horizontally flip 50% of the images
+    iaa.GaussianBlur(sigma=(0, 1.0)),  # blur images with a sigma between 0 and 1.0
+    iaa.Affine(rotate=(-45, 45)),  # rotate images between -45 and 45 degrees
+    iaa.AdditiveGaussianNoise(scale=(0, 0.05 * 255)),  # add Gaussian noise to images
+])
+
+# Iterate through the images
+image_files = os.listdir(os.path.join(dataset_dir, 'images'))
+for image_file in image_files:
+    # Load the image
+    image_path = os.path.join(dataset_dir, 'images', image_file)
+    image = Image.open(image_path)
+    
+    # Perform data augmentation
+    augmented_images = seq.augment_images([image])
+    
+    # Save augmented images
+    for i, augmented_image in enumerate(augmented_images):
+        output_file = f'{image_file.split(".")[0]}_aug{i}.jpg'
+        output_path = os.path.join(output_dir, output_file)
+        augmented_image.save(output_path)
+
+
+// dataset split
+import os
+import random
+import shutil
+
+# Set paths
+dataset_dir = 'path/to/dataset'
+train_dir = 'path/to/train'
+test_dir = 'path/to/test'
+
+# Set train-test split ratio
+train_ratio = 0.8
+
+# Create train and test directories
+os.makedirs(train_dir, exist_ok=True)
+os.makedirs(test_dir, exist_ok=True)
+
+# Get list of image files
+image_files = os.listdir(os.path.join(dataset_dir, 'images'))
+
+# Shuffle the image files
+random.shuffle(image_files)
+
+# Split the dataset
+train_split_index = int(len(image_files) * train_ratio)
+
+# Move images and annotations to respective train and test directories
+for i, image_file in enumerate(image_files):
+    annotation_file = image_file.replace('.jpg', '.xml')
+    
+    if i < train_split_index:
+        # Move to train directory
+        shutil.copy(os.path.join(dataset_dir, 'images', image_file), os.path.join(train_dir, image_file))
+        shutil.copy(os.path.join(dataset_dir, 'annotations', annotation_file), os.path.join(train_dir, annotation_file))
+    else:
+        # Move to test directory
+        shutil.copy(os.path.join(dataset_dir, 'images', image_file), os.path.join(test_dir, image_file))
+        shutil.copy(os.path.join(dataset_dir, 'annotations', annotation_file), os.path.join(test_dir, annotation_file))
+
+
+//untiy
+using UnityEngine;
+
+public class RetailStoreSimulation : MonoBehaviour
+{
+    public GameObject personPrefab;
+    public GameObject cartPrefab;
+    public GameObject productPrefab;
+    public Transform[] productLocations;
+    public Transform billingCounter;
+
+    private int totalProducts = 50;
+    private int productsInCarts = 0;
+
+    private void Start()
+    {
+        // Spawn people and shopping carts
+        SpawnPeople();
+        SpawnCarts();
+
+        // Spawn products at product locations
+        SpawnProducts();
+    }
+
+    private void SpawnPeople()
+    {
+        // Spawn people at store entrance
+        // Adjust positions based on the store layout
+        Instantiate(personPrefab, new Vector3(-5f, 0f, 0f), Quaternion.identity);
+        Instantiate(personPrefab, new Vector3(-4f, 0f, 0f), Quaternion.identity);
+        // Add more people as needed
+    }
+
+    private void SpawnCarts()
+    {
+        // Spawn shopping carts at a designated area
+        // Adjust positions based on the store layout
+        Instantiate(cartPrefab, new Vector3(-2f, 0f, 0f), Quaternion.identity);
+        Instantiate(cartPrefab, new Vector3(-1f, 0f, 0f), Quaternion.identity);
+        // Add more shopping carts as needed
+    }
+
+    private void SpawnProducts()
+    {
+        // Spawn products at predefined locations
+        for (int i = 0; i < totalProducts; i++)
+        {
+            // Instantiate the product at a random location from productLocations array
+            Instantiate(productPrefab, productLocations[Random.Range(0, productLocations.Length)].position, Quaternion.identity);
+        }
+    }
+
+    private void Update()
+    {
+        // Check if a person is near an empty shopping cart
+        // If yes, assign the cart to the person and make it follow them
+        GameObject[] people = GameObject.FindGameObjectsWithTag("Person");
+        GameObject[] carts = GameObject.FindGameObjectsWithTag("Cart");
+
+        foreach (GameObject person in people)
+        {
+            if (person.GetComponent<PersonController>().HasCart())
+                continue;
+
+            foreach (GameObject cart in carts)
+            {
+                if (!cart.GetComponent<CartController>().IsOccupied())
+                {
+                    person.GetComponent<PersonController>().AssignCart(cart);
+                    break;
+                }
+            }
+        }
+
+        // Check if a person is near a product
+        // If yes, let the person pick up the product and put it in their cart
+        GameObject[] products = GameObject.FindGameObjectsWithTag("Product");
+
+        foreach (GameObject person in people)
+        {
+            if (!person.GetComponent<PersonController>().HasCart())
+                continue;
+
+            foreach (GameObject product in products)
+            {
+                if (!product.GetComponent<ProductController>().IsPicked())
+                {
+                    person.GetComponent<PersonController>().PickProduct(product);
+                    break;
+                }
+            }
+        }
+
+        // Check if a person has reached the billing counter
+        // If yes, remove the products from their cart, calculate the bill, and display it
+        foreach (GameObject person in people)
+        {
+            if (person.transform.position.x >= billingCounter.position.x)
+            {
+                float billAmount = person.GetComponent<PersonController>().CalculateBill();
+                Debug.Log("Person at the billing counter. Bill amount: $" + billAmount);
+
+                // Reset the cart and remove products
+                person.GetComponent<PersonController>().ResetCart();
+            }
+        }
+    }
+}
